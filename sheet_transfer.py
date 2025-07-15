@@ -33,10 +33,10 @@ PHONE_COLUMN_INDEX = 3  # Столбец D (Телефон Лида) - инде�
 MAX_COLUMNS = 7  # Копируем столбцы A-G (индексы 0-6)
 
 # Настройки из переменных окружения
-SRC_ID = os.getenv("SRC_ID", "1AyaG7wEs_j4lgU1XcAqyjyUbFzYGsekRHP85J-dQXzg")
-DST_ID = os.getenv("DST_ID", "1fzggHYGhARWAgFaKL5PSWA836RqBZDqatd5VGp0cluc")
-SRC_SHEET = os.getenv("SRC_SHEET", "Контроль Лидов 2024")
-DST_SHEET = os.getenv("DST_SHEET", "Контроль Лидов 2025")
+SRC_ID = os.getenv("SRC_ID")
+DST_ID = os.getenv("DST_ID")
+SRC_SHEET = os.getenv("SRC_SHEET")
+DST_SHEET = os.getenv("DST_SHEET")
 
 # Настройка логирования
 logging.basicConfig(
