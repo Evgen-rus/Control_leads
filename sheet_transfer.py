@@ -394,17 +394,38 @@ def main():
             logger.warning("В источнике только заголовок — нет данных для синхронизации")
             return
         
-        # Извлекаем существующие телефоны из приёмника (пропускаем заголовок)
+        logger.info("=== Применение оптимизации по датам ===")
+        
+        # Проверяем настройку оптимизации источника
+        optimize_source = os.getenv('OPTIMIZE_SOURCE', 'false').lower() == 'true'
+        logger.info(f"Оптимизация источника: {'включена' if optimize_source else 'отключена'}")
+        
+        # Оптимизация источника (если включена)
+        src_data_rows = src_rows[1:]  # Пропускаем заголовок
+        logger.info(f"ИСТОЧНИК: общее количество строк данных: {len(src_data_rows)}")
+        
+        if optimize_source:
+            src_recent_start_index = find_recent_data_start_index(src_data_rows)
+            src_recent_rows = src_data_rows[src_recent_start_index:]
+            
+            logger.info(f"ИСТОЧНИК: будет обработано {len(src_recent_rows)} недавних строк")
+            if src_recent_start_index > 0:
+                logger.info(f"ИСТОЧНИК: пропущено {src_recent_start_index} старых строк")
+        else:
+            src_recent_rows = src_data_rows
+            logger.info(f"ИСТОЧНИК: будут обработаны все {len(src_recent_rows)} строк")
+        
+        # Оптимизация приёмника (всегда включена)
         dst_data_rows = dst_rows[1:] if len(dst_rows) > 1 else []
+        logger.info(f"ПРИЁМНИК: общее количество строк данных: {len(dst_data_rows)}")
         
-        # Оптимизация: находим индекс первой строки с датой >= вчера
-        recent_start_index = find_recent_data_start_index(dst_data_rows)
+        dst_recent_start_index = find_recent_data_start_index(dst_data_rows)
+        existing_phones = extract_phone_numbers(dst_data_rows, dst_recent_start_index)
         
-        # Извлекаем телефоны только из недавних данных
-        existing_phones = extract_phone_numbers(dst_data_rows, recent_start_index)
+        logger.info("=== Фильтрация новых записей ===")
         
-        # Фильтруем новые строки из источника (пропускаем заголовок)
-        new_rows = filter_new_rows(src_rows[1:], existing_phones)
+        # Фильтруем новые строки из обработанных данных источника
+        new_rows = filter_new_rows(src_recent_rows, existing_phones)
         
         # Добавляем новые строки в приёмник
         added_count = append_rows_to_sheet(service, DST_ID, DST_SHEET, new_rows)
