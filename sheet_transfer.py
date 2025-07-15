@@ -368,6 +368,85 @@ def append_rows_to_sheet(service, spreadsheet_id: str, sheet_name: str, rows: Li
     return len(rows)
 
 
+def sync_and_return_new_rows() -> List[List[str]]:
+    """
+    Выполняет синхронизацию данных между таблицами и возвращает новые строки.
+    Функция для интеграции с Telegram-ботом.
+    
+    Returns:
+        List[List[str]]: Список новых строк, добавленных в приёмник
+        
+    Raises:
+        Exception: При критических ошибках синхронизации
+    """
+    try:
+        logger.info("=== Запуск синхронизации для Telegram-бота ===")
+        logger.info(f"Источник: {SRC_SHEET} (ID: {SRC_ID[:10]}...)")
+        logger.info(f"Приёмник: {DST_SHEET} (ID: {DST_ID[:10]}...)")
+        
+        # Создаём сервис Google Sheets
+        service = create_sheets_service()
+        
+        # Читаем данные из источника и приёмника
+        src_rows = get_sheet_data(service, SRC_ID, SRC_SHEET)
+        dst_rows = get_sheet_data(service, DST_ID, DST_SHEET)
+        
+        # Проверяем, что источник не пуст
+        if not src_rows:
+            logger.warning("Источник пуст — нечего синхронизировать")
+            return []
+        
+        if len(src_rows) <= 1:
+            logger.warning("В источнике только заголовок — нет данных для синхронизации")
+            return []
+        
+        logger.info("=== Применение оптимизации по датам ===")
+        
+        # Проверяем настройку оптимизации источника
+        optimize_source = os.getenv('OPTIMIZE_SOURCE', 'false').lower() == 'true'
+        logger.info(f"Оптимизация источника: {'включена' if optimize_source else 'отключена'}")
+        
+        # Оптимизация источника (если включена)
+        src_data_rows = src_rows[1:]  # Пропускаем заголовок
+        logger.info(f"ИСТОЧНИК: общее количество строк данных: {len(src_data_rows)}")
+        
+        if optimize_source:
+            src_recent_start_index = find_recent_data_start_index(src_data_rows)
+            src_recent_rows = src_data_rows[src_recent_start_index:]
+            
+            logger.info(f"ИСТОЧНИК: будет обработано {len(src_recent_rows)} недавних строк")
+            if src_recent_start_index > 0:
+                logger.info(f"ИСТОЧНИК: пропущено {src_recent_start_index} старых строк")
+        else:
+            src_recent_rows = src_data_rows
+            logger.info(f"ИСТОЧНИК: будут обработаны все {len(src_recent_rows)} строк")
+        
+        # Оптимизация приёмника (всегда включена)
+        dst_data_rows = dst_rows[1:] if len(dst_rows) > 1 else []
+        logger.info(f"ПРИЁМНИК: общее количество строк данных: {len(dst_data_rows)}")
+        
+        dst_recent_start_index = find_recent_data_start_index(dst_data_rows)
+        existing_phones = extract_phone_numbers(dst_data_rows, dst_recent_start_index)
+        
+        logger.info("=== Фильтрация новых записей ===")
+        
+        # Фильтруем новые строки из обработанных данных источника
+        new_rows = filter_new_rows(src_recent_rows, existing_phones)
+        
+        # Добавляем новые строки в приёмник
+        if new_rows:
+            append_rows_to_sheet(service, DST_ID, DST_SHEET, new_rows)
+            logger.info(f"=== Синхронизация завершена. Добавлено {len(new_rows)} новых строк ===")
+        else:
+            logger.info("=== Синхронизация завершена. Новых строк не найдено ===")
+        
+        return new_rows
+        
+    except Exception as e:
+        logger.error(f"Критическая ошибка в sync_and_return_new_rows(): {e}")
+        raise
+
+
 def main():
     """
     Основная функция скрипта.
