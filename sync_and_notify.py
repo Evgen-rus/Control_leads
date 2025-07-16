@@ -34,9 +34,7 @@ async def main():
     """
     try:
         start_time = datetime.now()
-        logger.info("=" * 60)
         logger.info("ЗАПУСК СИНХРОНИЗАЦИИ И УВЕДОМЛЕНИЙ")
-        logger.info("=" * 60)
         logger.info(f"Время запуска: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
         
         # Запускаем синхронизацию и уведомления
@@ -44,10 +42,8 @@ async def main():
         
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds()
-        logger.info("=" * 60)
         logger.info(f"СИНХРОНИЗАЦИЯ И УВЕДОМЛЕНИЯ ЗАВЕРШЕНЫ")
         logger.info(f"Время выполнения: {duration:.2f} секунд")
-        logger.info("=" * 60)
         
     except Exception as e:
         logger.error(f"Критическая ошибка в main(): {e}")

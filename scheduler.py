@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
-Планировщик запуска sheet_transfer.py
+Планировщик запуска sync_and_notify.py
 
-Выполняет запуск скрипта sheet_transfer.py каждый час (3600 секунд).
+Выполняет запуск скрипта sync_and_notify.py через заданные интервалы времени.
 Первый запуск происходит сразу после старта планировщика.
 Поддерживает загрузку переменных из .env файла.
 """
@@ -20,7 +20,7 @@ from datetime import datetime
 # Загружаем переменные из .env файла
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    load_dotenv(override=True)
     logging.info("Переменные окружения загружены из .env файла")
 except ImportError:
     logging.warning("python-dotenv не установлен. Используем системные переменные окружения.")
@@ -37,14 +37,14 @@ logging.basicConfig(
 logger = logging.getLogger('scheduler')
 
 # Интервал запуска скрипта в секундах (по умолчанию 10 минут)
-INTERVAL_SECONDS = int(os.getenv('SYNC_INTERVAL_SECONDS', 600))
+INTERVAL_SECONDS = int(os.getenv('SYNC_INTERVAL_SECONDS', 300))
 
 # Флаг для отслеживания запроса на завершение
 terminate = False
 
-def run_transfer_script():
+def run_sync_and_notify_script():
     """
-    Запускает основной скрипт sheet_transfer.py.
+    Запускает скрипт sync_and_notify.py для синхронизации и отправки уведомлений.
     Выводит логи скрипта напрямую в консоль.
     
     Returns:
@@ -53,11 +53,11 @@ def run_transfer_script():
     try:
         start_time = datetime.now()
         logger.info("=" * 50)
-        logger.info(f"Запуск скрипта sheet_transfer.py в {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"Запуск скрипта sync_and_notify.py в {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info("=" * 50)
         
         # Полный путь к скрипту
-        script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sheet_transfer.py")
+        script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sync_and_notify.py")
         
         if not os.path.exists(script_path):
             logger.error(f"Файл скрипта не найден: {script_path}")
@@ -135,13 +135,13 @@ def main():
     Основная функция планировщика.
     """
     logger.info("=" * 60)
-    logger.info("ЗАПУСК ПЛАНИРОВЩИКА СИНХРОНИЗАЦИИ GOOGLE SHEETS")
+    logger.info("ЗАПУСК ПЛАНИРОВЩИКА СИНХРОНИЗАЦИИ И УВЕДОМЛЕНИЙ")
     logger.info("=" * 60)
     logger.info(f"Интервал синхронизации: {format_time_interval(INTERVAL_SECONDS)}")
-    logger.info(f"Скрипт: sheet_transfer.py")
+    logger.info(f"Скрипт: sync_and_notify.py")
     
     # Проверяем наличие необходимых переменных окружения
-    required_vars = ['GOOGLE_CREDENTIALS_FILE', 'SRC_ID', 'DST_ID', 'SRC_SHEET', 'DST_SHEET']
+    required_vars = ['GOOGLE_CREDENTIALS_FILE', 'SRC_ID', 'DST_ID', 'SRC_SHEET', 'DST_SHEET', 'TELEGRAM_BOT_TOKEN_ASSISTANT', 'TELEGRAM_CHAT_ID']
     missing_vars = []
     
     for var in required_vars:
@@ -159,7 +159,7 @@ def main():
     
     # Запускаем скрипт сразу при старте планировщика
     logger.info("Выполняем первый запуск скрипта при старте планировщика")
-    success = run_transfer_script()
+    success = run_sync_and_notify_script()
     
     if not success:
         logger.warning("Первый запуск завершился с ошибкой, но планировщик продолжит работу")
@@ -177,7 +177,7 @@ def main():
         
         # Проверяем, прошел ли интервал времени с последнего запуска
         if current_time - last_run_time >= INTERVAL_SECONDS:
-            success = run_transfer_script()
+            success = run_sync_and_notify_script()
             last_run_time = time.time()
             
             if not success:
