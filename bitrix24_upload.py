@@ -11,9 +11,14 @@
 
 import requests
 import logging
+import os
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+from dotenv import load_dotenv
 from sheet_transfer import sync_and_return_new_rows
+
+# Загружаем переменные окружения
+load_dotenv(override=True)
 
 # Настройка логирования
 logging.basicConfig(
@@ -23,8 +28,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Загружаем настройки Битрикс24 из переменных окружения
+BITRIX_WEBHOOK_URL = os.getenv('BITRIX_WEBHOOK_URL')
+if not BITRIX_WEBHOOK_URL:
+    raise ValueError("BITRIX_WEBHOOK_URL не найден в переменных окружения")
+
 # Константы для Битрикс24
-BITRIX_WEBHOOK_URL = "https://obtorg.bitrix24.ru/rest/109/x1ern505p06qblxz"
 RESPONSIBLE_ID = 109  # Михаил
 SOURCE_ID = "10"  # ЛидгенБюро
 UTM_SOURCE = "leadgenburo"
@@ -118,7 +127,7 @@ class BitrixLeadUploader:
         
         return formatted_comment
     
-    def create_lead(self, row_data: List[str]) -> bool:
+    def create_lead(self, row_data: List[str]) -> Dict[str, Any]:
         """
         Создаёт лид в Битрикс24 на основе данных из строки
         
@@ -126,7 +135,7 @@ class BitrixLeadUploader:
             row_data (List[str]): Данные строки из Google-таблицы
             
         Returns:
-            bool: True если лид создан успешно, False в случае ошибки
+            Dict[str, Any]: Результат создания лида {success: bool, lead_id: int|None, name: str, phone: str}
         """
         try:
             # Извлекаем основные данные
@@ -135,7 +144,7 @@ class BitrixLeadUploader:
             
             if not phone:
                 logger.warning(f"Пропущен лид без телефона: {name}")
-                return False
+                return {"success": False, "lead_id": None, "name": name, "phone": phone, "error": "Отсутствует телефон"}
             
             # Формируем комментарий
             formatted_comment = self._format_comment(row_data)
@@ -162,18 +171,20 @@ class BitrixLeadUploader:
                 lead_id = result["result"]
                 self.leads_created += 1
                 logger.info(f"✅ Лид успешно создан. ID: {lead_id}, Имя: {name}, Телефон: {phone}")
-                return True
+                return {"success": True, "lead_id": lead_id, "name": name, "phone": phone}
             else:
                 logger.error(f"❌ Ошибка создания лида для {name}: {result}")
                 self.leads_failed += 1
-                return False
+                return {"success": False, "lead_id": None, "name": name, "phone": phone, "error": str(result)}
                 
         except Exception as e:
             logger.error(f"❌ Исключение при создании лида для {row_data}: {e}")
             self.leads_failed += 1
-            return False
+            name = row_data[2] if len(row_data) > 2 else "Без имени"
+            phone = row_data[3] if len(row_data) > 3 else ""
+            return {"success": False, "lead_id": None, "name": name, "phone": phone, "error": str(e)}
     
-    def process_new_rows(self, new_rows: List[List[str]]) -> Dict[str, int]:
+    def process_new_rows(self, new_rows: List[List[str]]) -> Dict[str, Any]:
         """
         Обрабатывает массив новых строк и создаёт лиды в Битрикс24
         
@@ -181,11 +192,11 @@ class BitrixLeadUploader:
             new_rows (List[List[str]]): Список новых строк из синхронизации
             
         Returns:
-            Dict[str, int]: Статистика обработки (created, failed)
+            Dict[str, Any]: Статистика обработки (created, failed, leads)
         """
         if not new_rows:
             logger.info("Новых строк для отправки в Битрикс24 нет")
-            return {"created": 0, "failed": 0}
+            return {"created": 0, "failed": 0, "leads": []}
         
         logger.info(f"=== Начало отправки {len(new_rows)} лидов в Битрикс24 ===")
         
@@ -193,14 +204,18 @@ class BitrixLeadUploader:
         self.leads_created = 0
         self.leads_failed = 0
         
+        # Список для сбора результатов
+        leads_results = []
+        
         # Обрабатываем каждую строку
         for i, row in enumerate(new_rows, 1):
             logger.info(f"Обработка лида {i}/{len(new_rows)}")
             
             # Создаём лид
-            success = self.create_lead(row)
+            result = self.create_lead(row)
+            leads_results.append(result)
             
-            if not success:
+            if not result["success"]:
                 # Логируем данные строки для отладки
                 logger.debug(f"Данные неудачной строки: {row}")
         
@@ -212,17 +227,18 @@ class BitrixLeadUploader:
         
         return {
             "created": self.leads_created,
-            "failed": self.leads_failed
+            "failed": self.leads_failed,
+            "leads": leads_results
         }
 
 
-def upload_leads_to_bitrix() -> Dict[str, int]:
+def upload_leads_to_bitrix() -> Dict[str, Any]:
     """
     Основная функция для отправки лидов в Битрикс24.
     Интегрируется с существующей системой синхронизации.
     
     Returns:
-        Dict[str, int]: Статистика отправки (created, failed)
+        Dict[str, Any]: Статистика отправки (created, failed, leads)
         
     Raises:
         Exception: При критических ошибках
@@ -236,7 +252,7 @@ def upload_leads_to_bitrix() -> Dict[str, int]:
         
         if not new_rows:
             logger.info("Новых лидов для отправки в Битрикс24 нет")
-            return {"created": 0, "failed": 0}
+            return {"created": 0, "failed": 0, "leads": []}
         
         logger.info(f"Получено {len(new_rows)} новых лидов для отправки в Битрикс24")
         

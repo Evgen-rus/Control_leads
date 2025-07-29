@@ -147,7 +147,7 @@ async def notify_rows_data(new_rows: List[List[str]]) -> bool:
             return False
 
 
-def upload_rows_to_bitrix(new_rows: List[List[str]]) -> Dict[str, int]:
+def upload_rows_to_bitrix(new_rows: List[List[str]]) -> Dict[str, Any]:
     """
     Создаёт лиды в Битрикс24 для переданных строк данных.
     
@@ -155,12 +155,12 @@ def upload_rows_to_bitrix(new_rows: List[List[str]]) -> Dict[str, int]:
         new_rows (List[List[str]]): Список новых строк для отправки
         
     Returns:
-        Dict[str, int]: Статистика отправки (created, failed)
+        Dict[str, Any]: Статистика отправки (created, failed, leads)
     """
     try:
         if not new_rows:
             logger.info("Новых строк для отправки в Битрикс24 нет")
-            return {"created": 0, "failed": 0}
+            return {"created": 0, "failed": 0, "leads": []}
         
         logger.info(f"Получено {len(new_rows)} новых лидов для отправки в Битрикс24")
         
@@ -174,7 +174,91 @@ def upload_rows_to_bitrix(new_rows: List[List[str]]) -> Dict[str, int]:
         
     except Exception as e:
         logger.error(f"Критическая ошибка при отправке в Битрикс24: {e}")
-        return {"created": 0, "failed": 0}
+        return {"created": 0, "failed": 0, "leads": []}
+
+
+async def send_bitrix_notification(bitrix_result: Dict[str, Any]) -> bool:
+    """
+    Отправляет уведомление в Telegram о результатах создания лидов в Битрикс24.
+    
+    Args:
+        bitrix_result (Dict[str, Any]): Результат обработки лидов в Битрикс24
+        
+    Returns:
+        bool: True если успешно, False при ошибке
+    """
+    from aiogram import Bot
+    import os
+    from dotenv import load_dotenv
+    
+    # Загружаем переменные окружения
+    load_dotenv(override=True)
+    
+    TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN_ASSISTANT')
+    TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
+    BITRIX_DOMAIN = os.getenv('BITRIX_WEBHOOK_URL', '').split('/rest/')[0] if os.getenv('BITRIX_WEBHOOK_URL') else ""
+    
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        logger.error("Отсутствуют настройки Telegram для уведомлений о Битрикс24")
+        return False
+    
+    try:
+        TELEGRAM_CHAT_ID = int(TELEGRAM_CHAT_ID)
+    except ValueError:
+        logger.error(f"TELEGRAM_CHAT_ID должен быть числом: {TELEGRAM_CHAT_ID}")
+        return False
+    
+    # Проверяем, есть ли что отправлять
+    if bitrix_result.get("created", 0) == 0 and bitrix_result.get("failed", 0) == 0:
+        logger.info("Нет данных о лидах в Битрикс24 для отправки уведомления")
+        return True
+    
+    async with Bot(token=TELEGRAM_BOT_TOKEN) as bot:
+        try:
+            # Формируем основное сообщение
+            created = bitrix_result.get("created", 0)
+            failed = bitrix_result.get("failed", 0)
+            leads = bitrix_result.get("leads", [])
+            
+            # Заголовок сообщения
+            if created > 0:
+                message = f"🚀 <b>Результаты отправки в Битрикс24</b>\n\n"
+                message += f"✅ Успешно создано лидов: <b>{created}</b>\n"
+                if failed > 0:
+                    message += f"❌ Ошибок при создании: <b>{failed}</b>\n"
+                
+                # Добавляем ссылки на успешно созданные лиды
+                successful_leads = [lead for lead in leads if lead.get("success") and lead.get("lead_id")]
+                
+                if successful_leads and BITRIX_DOMAIN:
+                    message += "🔗 <b>Ссылки на созданные лиды:</b>\n"
+                    for lead in successful_leads[:5]:  # Ограничиваем количество ссылок
+                        lead_id = lead["lead_id"]
+                        name = lead["name"]
+                        phone = lead["phone"]
+                        lead_url = f"{BITRIX_DOMAIN}/crm/lead/details/{lead_id}/"
+                        message += f"• <a href='{lead_url}'>{name} ({phone})</a>\n"
+                    
+                    if len(successful_leads) > 5:
+                        message += f"... и ещё {len(successful_leads) - 5} лидов\n"
+                
+            else:
+                message = f"❌ <b>Ошибки при создании лидов в Битрикс24</b>\n\n"
+                message += f"Не удалось создать ни одного лида из {failed} попыток"
+            
+            await bot.send_message(
+                chat_id=TELEGRAM_CHAT_ID,
+                text=message,
+                parse_mode="HTML",
+                disable_web_page_preview=True
+            )
+            
+            logger.info(f"Отправлено уведомление о результатах Битрикс24: {created} создано, {failed} ошибок")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Ошибка при отправке уведомления о Битрикс24: {e}")
+            return False
 
 
 async def main():
@@ -190,7 +274,8 @@ async def main():
         # Счётчики для статистики
         sync_success = False
         telegram_success = False
-        bitrix_result = {"created": 0, "failed": 0}
+        bitrix_result = {"created": 0, "failed": 0, "leads": []}
+        bitrix_notification_success = False
         new_rows = []
         
         # Этап 1: Синхронизация Google-таблиц
@@ -226,11 +311,21 @@ async def main():
                 logger.info("🚀 ЭТАП 3: Отправка лидов в Битрикс24")
                 bitrix_result = upload_rows_to_bitrix(new_rows)
                 logger.info("✅ Этап 3 завершён успешно")
+                
+                # Этап 4: Уведомление о результатах Битрикс24
+                logger.info("📩 ЭТАП 4: Отправка уведомления о результатах Битрикс24")
+                bitrix_notification_success = await send_bitrix_notification(bitrix_result)
+                if bitrix_notification_success:
+                    logger.info("✅ Этап 4 завершён успешно")
+                else:
+                    logger.error("❌ Этап 4 завершён с ошибками")
+                    
             except Exception as e:
                 logger.error(f"❌ Ошибка при отправке лидов в Битрикс24: {e}")
-                bitrix_result = {"created": 0, "failed": 0}
+                bitrix_result = {"created": 0, "failed": 0, "leads": []}
         else:
             logger.info("🚀 ЭТАП 3: Пропущен (нет новых данных)")
+            logger.info("📩 ЭТАП 4: Пропущен (нет новых данных)")
         
         # Итоговая статистика
         end_time = datetime.now()
@@ -245,6 +340,7 @@ async def main():
         logger.info(f"Telegram уведомления: {'✅ Успешно' if telegram_success else '❌ Ошибка'}")
         logger.info(f"Лидов создано в Битрикс24: {bitrix_result['created']}")
         logger.info(f"Ошибок при создании лидов: {bitrix_result['failed']}")
+        logger.info(f"Уведомления о Битрикс24: {'✅ Успешно' if bitrix_notification_success else '❌ Ошибка'}")
         
         if bitrix_result['created'] > 0 or bitrix_result['failed'] > 0:
             total_processed = bitrix_result['created'] + bitrix_result['failed']
