@@ -16,22 +16,30 @@ import signal
 import sys
 import os
 from datetime import datetime
+from pathlib import Path
 
 # Загружаем переменные из .env файла
 try:
     from dotenv import load_dotenv
     load_dotenv(override=True)
-    logging.info("Переменные окружения загружены из .env файла")
+    print("Переменные окружения загружены из .env файла")
 except ImportError:
-    logging.warning("python-dotenv не установлен. Используем системные переменные окружения.")
+    print("python-dotenv не установлен. Используем системные переменные окружения.")
 
-# Настройка логирования для планировщика
+# Создаём папку для логов если её нет
+logs_dir = Path("logs")
+logs_dir.mkdir(exist_ok=True)
+
+# Настройка логирования с записью в файл
+log_filename = logs_dir / f"scheduler_{datetime.now().strftime('%Y%m%d')}.log"
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s: %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S',
     handlers=[
-        logging.StreamHandler(sys.stdout)
+        logging.FileHandler(str(log_filename), encoding='utf-8'),  # Запись в файл
+        logging.StreamHandler(sys.stdout)  # Вывод в консоль
     ]
 )
 logger = logging.getLogger('scheduler')
@@ -64,13 +72,38 @@ def run_sync_and_notify_script():
             return False
         
         # Запуск скрипта как отдельного процесса
-        result = subprocess.run(
-            [sys.executable, script_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding='utf-8'
-        )
+        # Определяем кодировку в зависимости от системы
+        import locale
+        system_encoding = locale.getpreferredencoding()
+        
+        try:
+            # Устанавливаем переменные окружения для UTF-8
+            env = os.environ.copy()
+            env['PYTHONIOENCODING'] = 'utf-8'
+            
+            # Пробуем запустить с UTF-8
+            result = subprocess.run(
+                [sys.executable, script_path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                env=env
+            )
+        except UnicodeDecodeError:
+            # Если не получилось, используем системную кодировку
+            logger.warning(f"Проблема с UTF-8, переключаемся на {system_encoding}")
+            env['PYTHONIOENCODING'] = system_encoding
+            result = subprocess.run(
+                [sys.executable, script_path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding=system_encoding,
+                errors='replace',
+                env=env
+            )
         
         # Выводим логи скрипта
         if result.stdout:
@@ -139,6 +172,7 @@ def main():
     logger.info("=" * 60)
     logger.info(f"Интервал синхронизации: {format_time_interval(INTERVAL_SECONDS)}")
     logger.info(f"Скрипт: sync_and_notify.py")
+    logger.info(f"Логи записываются в: {log_filename}")
     
     # Проверяем наличие необходимых переменных окружения
     required_vars = ['GOOGLE_CREDENTIALS_FILE', 'SRC_ID', 'DST_ID', 'SRC_SHEET', 'DST_SHEET', 'TELEGRAM_BOT_TOKEN_ASSISTANT', 'TELEGRAM_CHAT_ID']
