@@ -184,6 +184,55 @@ def parse_date(date_str: str) -> Optional[datetime]:
         return None
 
 
+def normalize_phone_number(phone: str) -> str:
+    """
+    Нормализует номер телефона, приводя к формату 79123456789.
+    Убирает все нечисловые символы, обрабатывает различные форматы.
+    
+    Args:
+        phone: Исходный номер телефона в любом формате
+        
+    Returns:
+        str: Нормализованный номер в формате 79123456789 или пустая строка если невалидный
+        
+    Examples:
+        '+7 (912) 345-67-89' -> '79123456789'
+        '8-912-345-67-89' -> '79123456789'
+        '+79123456789' -> '79123456789'
+        '89123456789' -> '79123456789'
+    """
+    if not phone or not isinstance(phone, str):
+        return ""
+    
+    # Убираем все нечисловые символы
+    digits_only = ''.join(filter(str.isdigit, phone))
+    
+    # Проверяем минимальную длину (должно быть как минимум 10 цифр)
+    if len(digits_only) < 10:
+        logger.debug(f"Слишком короткий номер после очистки: '{phone}' -> '{digits_only}'")
+        return ""
+    
+    # Обрабатываем различные форматы российских номеров
+    if len(digits_only) == 11:
+        # 79123456789 или 89123456789
+        if digits_only.startswith('7'):
+            return digits_only  # Уже в нужном формате
+        elif digits_only.startswith('8'):
+            return '7' + digits_only[1:]  # Заменяем 8 на 7
+    elif len(digits_only) == 10:
+        # 9123456789 (без кода страны)
+        if digits_only.startswith('9'):
+            return '7' + digits_only
+    
+    # Если номер слишком длинный или не соответствует российскому формату
+    if len(digits_only) > 11:
+        logger.debug(f"Слишком длинный номер: '{phone}' -> '{digits_only}'")
+        return ""
+    
+    logger.debug(f"Не удалось нормализовать номер: '{phone}' -> '{digits_only}'")
+    return ""
+
+
 def find_recent_data_start_index(rows: List[List[str]]) -> int:
     """
     Находит индекс первой строки с датой >= (сегодня - ANALYSIS_DAYS_DEPTH дней).
@@ -246,28 +295,41 @@ def find_recent_data_start_index(rows: List[List[str]]) -> int:
 
 def extract_phone_numbers(rows: List[List[str]], start_index: int = 0) -> Set[str]:
     """
-    Извлекает номера телефонов из строк (столбец D, индекс 3).
+    Извлекает нормализованные номера телефонов из строк (столбец D, индекс 3).
     Может анализировать только часть строк для оптимизации.
+    Номера приводятся к единому формату 79123456789 для корректного сравнения.
     
     Args:
         rows: Список строк с данными
         start_index: Индекс первой строки для анализа (по умолчанию 0)
         
     Returns:
-        Set[str]: Множество номеров телефонов
+        Set[str]: Множество нормализованных номеров телефонов
     """
     phones = set()
     analyzed_rows = rows[start_index:] if start_index > 0 else rows
+    invalid_phones = 0
     
     for row in analyzed_rows:
         if len(row) > PHONE_COLUMN_INDEX and row[PHONE_COLUMN_INDEX].strip():
-            phone = row[PHONE_COLUMN_INDEX].strip()
-            phones.add(phone)
+            original_phone = row[PHONE_COLUMN_INDEX].strip()
+            normalized_phone = normalize_phone_number(original_phone)
+            
+            if normalized_phone:
+                phones.add(normalized_phone)
+                if original_phone != normalized_phone:
+                    logger.debug(f"Нормализован номер: '{original_phone}' -> '{normalized_phone}'")
+            else:
+                invalid_phones += 1
+                logger.debug(f"Пропущен некорректный номер: '{original_phone}'")
     
     if start_index > 0:
-        logger.info(f"Найдено {len(phones)} уникальных телефонов в {len(analyzed_rows)} недавних строках")
+        logger.info(f"Найдено {len(phones)} уникальных нормализованных телефонов в {len(analyzed_rows)} недавних строках")
     else:
-        logger.info(f"Найдено {len(phones)} уникальных телефонов во всех {len(rows)} строках")
+        logger.info(f"Найдено {len(phones)} уникальных нормализованных телефонов во всех {len(rows)} строках")
+    
+    if invalid_phones > 0:
+        logger.info(f"Пропущено {invalid_phones} некорректных номеров телефонов")
     
     return phones
 
@@ -275,19 +337,21 @@ def extract_phone_numbers(rows: List[List[str]], start_index: int = 0) -> Set[st
 def filter_new_rows(src_rows: List[List[str]], existing_phones: Set[str]) -> List[List[str]]:
     """
     Фильтрует новые строки, которых ещё нет в приёмнике.
-    Сравнение происходит по столбцу D (Телефон Лида).
-    Строки без номера телефона пропускаются.
+    Сравнение происходит по нормализованным номерам телефонов (столбец D).
+    В приёмник записываются строки с нормализованными номерами в формате 79123456789.
+    Строки без номера телефона или с некорректными номерами пропускаются.
     
     Args:
         src_rows: Строки из источника (без заголовка)
-        existing_phones: Множество существующих телефонов в приёмнике
+        existing_phones: Множество существующих нормализованных телефонов в приёмнике
         
     Returns:
-        List[List[str]]: Список новых строк для добавления
+        List[List[str]]: Список новых строк для добавления с нормализованными номерами
     """
     new_rows = []
     skipped_no_phone = 0
     skipped_duplicate = 0
+    skipped_invalid = 0
     
     for row in src_rows:
         # Нормализуем строку до 7 столбцов (A-G)
@@ -295,23 +359,39 @@ def filter_new_rows(src_rows: List[List[str]], existing_phones: Set[str]) -> Lis
         
         # Проверяем наличие телефона в столбце D
         if len(normalized_row) > PHONE_COLUMN_INDEX:
-            phone = normalized_row[PHONE_COLUMN_INDEX].strip()
+            original_phone = normalized_row[PHONE_COLUMN_INDEX].strip()
             
             # Пропускаем строки без номера телефона
-            if not phone:
+            if not original_phone:
                 skipped_no_phone += 1
                 logger.debug(f"Пропущена строка без телефона: {normalized_row[:3]}...")
                 continue
             
-            # Пропускаем строки с уже существующими телефонами
-            if phone in existing_phones:
-                skipped_duplicate += 1
-                logger.debug(f"Пропущена дублирующая строка (телефон: {phone}): {normalized_row[:3]}...")
+            # Нормализуем номер телефона
+            normalized_phone = normalize_phone_number(original_phone)
+            
+            # Пропускаем строки с некорректными номерами
+            if not normalized_phone:
+                skipped_invalid += 1
+                logger.debug(f"Пропущена строка с некорректным номером '{original_phone}': {normalized_row[:3]}...")
                 continue
             
-            # Добавляем новую строку
+            # Пропускаем строки с уже существующими телефонами
+            if normalized_phone in existing_phones:
+                skipped_duplicate += 1
+                logger.debug(f"Пропущена дублирующая строка (нормализованный телефон: {normalized_phone}): {normalized_row[:3]}...")
+                continue
+            
+            # Заменяем оригинальный номер на нормализованный в строке для записи
+            normalized_row[PHONE_COLUMN_INDEX] = normalized_phone
+            
+            # Добавляем новую строку с нормализованным номером
             new_rows.append(normalized_row)
-            logger.debug(f"Новая строка: {normalized_row[:3]}... (телефон: {phone})")
+            
+            if original_phone != normalized_phone:
+                logger.debug(f"Новая строка с нормализованным номером: {normalized_row[:3]}... ('{original_phone}' -> '{normalized_phone}')")
+            else:
+                logger.debug(f"Новая строка: {normalized_row[:3]}... (телефон: {normalized_phone})")
         else:
             # Строка слишком короткая (нет столбца D)
             skipped_no_phone += 1
@@ -320,6 +400,7 @@ def filter_new_rows(src_rows: List[List[str]], existing_phones: Set[str]) -> Lis
     logger.info(f"Обработано строк: {len(src_rows)}")
     logger.info(f"Новых строк для добавления: {len(new_rows)}")
     logger.info(f"Пропущено строк без телефона: {skipped_no_phone}")
+    logger.info(f"Пропущено строк с некорректными номерами: {skipped_invalid}")
     logger.info(f"Пропущено дублирующих строк: {skipped_duplicate}")
     
     return new_rows
