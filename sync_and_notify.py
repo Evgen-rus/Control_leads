@@ -26,8 +26,8 @@ from notifier import notify_new_rows
 from bitrix24_upload import BitrixLeadUploader
 from sheet_transfer import sync_and_return_new_rows
 
-# Создаём папку для логов если её нет
-logs_dir = Path("logs")
+# Создаём папку для логов (абсолютный путь рядом со скриптом)
+logs_dir = (Path(__file__).resolve().parent / "logs")
 logs_dir.mkdir(exist_ok=True)
 
 # Настройка логирования с записью в файл
@@ -40,7 +40,8 @@ logging.basicConfig(
     handlers=[
         logging.FileHandler(str(log_filename), encoding='utf-8'),  # Запись в файл
         logging.StreamHandler()  # Вывод в консоль
-    ]
+    ],
+    force=True  # Принудительно переопределяем конфигурацию, если она уже была настроена при импорте
 )
 logger = logging.getLogger(__name__)
 

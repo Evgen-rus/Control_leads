@@ -26,8 +26,8 @@ try:
 except ImportError:
     print("python-dotenv не установлен. Используем системные переменные окружения.")
 
-# Создаём папку для логов если её нет
-logs_dir = Path("logs")
+# Создаём папку для логов рядом со скриптом (абсолютный путь)
+logs_dir = (Path(__file__).resolve().parent / "logs")
 logs_dir.mkdir(exist_ok=True)
 
 # Настройка логирования с записью в файл
@@ -89,7 +89,8 @@ def run_sync_and_notify_script():
                 text=True,
                 encoding='utf-8',
                 errors='replace',
-                env=env
+                env=env,
+                cwd=os.path.dirname(script_path)  # гарантируем запуск в директории проекта
             )
         except UnicodeDecodeError:
             # Если не получилось, используем системную кодировку
@@ -102,7 +103,8 @@ def run_sync_and_notify_script():
                 text=True,
                 encoding=system_encoding,
                 errors='replace',
-                env=env
+                env=env,
+                cwd=os.path.dirname(script_path)  # гарантируем запуск в директории проекта
             )
         
         # Выводим логи скрипта

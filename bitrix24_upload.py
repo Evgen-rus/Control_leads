@@ -20,12 +20,6 @@ from sheet_transfer import sync_and_return_new_rows
 # Загружаем переменные окружения
 load_dotenv(override=True)
 
-# Настройка логирования
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
-)
 logger = logging.getLogger(__name__)
 
 # Загружаем настройки Битрикс24 из переменных окружения
