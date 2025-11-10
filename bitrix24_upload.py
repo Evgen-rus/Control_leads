@@ -16,6 +16,8 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 from dotenv import load_dotenv
 from sheet_transfer import sync_and_return_new_rows
+import time
+import random
 
 # Загружаем переменные окружения
 load_dotenv(override=True)
@@ -26,6 +28,10 @@ logger = logging.getLogger(__name__)
 BITRIX_WEBHOOK_URL = os.getenv('BITRIX_WEBHOOK_URL')
 if not BITRIX_WEBHOOK_URL:
     raise ValueError("BITRIX_WEBHOOK_URL не найден в переменных окружения")
+
+# Параметры ретраев (по умолчанию 3 попытки, базовая задержка 1 сек)
+BITRIX_MAX_RETRIES = int(os.getenv('BITRIX_MAX_RETRIES', '3'))
+BITRIX_RETRY_BASE_DELAY = float(os.getenv('BITRIX_RETRY_BASE_DELAY', '1.0'))
 
 # Константы для Битрикс24
 RESPONSIBLE_ID = 109  # Михаил
@@ -64,24 +70,44 @@ class BitrixLeadUploader:
         """
         url = f"{self.webhook_url}/{method}"
         
-        try:
-            logger.debug(f"Отправка запроса: {method}")
-            logger.debug(f"Параметры: {params}")
-            
-            response = requests.post(url, json=params, timeout=30)
-            response.raise_for_status()
-            
-            result = response.json()
-            logger.debug(f"Ответ API: {result}")
-            
-            return result
-            
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Ошибка при выполнении запроса {method}: {e}")
-            logger.error(f"URL запроса: {url}")
-            if hasattr(response, 'text'):
-                logger.error(f"Ответ сервера: {response.text[:500]}...")
-            raise
+        last_error: Optional[Exception] = None
+        for attempt in range(1, max(1, BITRIX_MAX_RETRIES) + 1):
+            try:
+                logger.debug(f"Отправка запроса: {method}. Попытка {attempt}/{max(1, BITRIX_MAX_RETRIES)}")
+                logger.debug(f"Параметры: {params}")
+                
+                response = requests.post(url, json=params, timeout=30)
+                response.raise_for_status()
+                
+                result = response.json()
+                logger.debug(f"Ответ API: {result}")
+                return result
+            except requests.exceptions.RequestException as e:
+                last_error = e
+                # Безопасно достаём тело ответа, если оно есть
+                resp = getattr(e, 'response', None)
+                if resp is not None:
+                    try:
+                        body_preview = resp.text[:500]
+                    except Exception:
+                        body_preview = '<unavailable>'
+                    logger.error(f"Ошибка {method}: {e}. Код HTTP: {resp.status_code if hasattr(resp, 'status_code') else 'n/a'}; Фрагмент ответа: {body_preview}...")
+                else:
+                    logger.error(f"Ошибка {method}: {e}. Ответ отсутствует (сетевой сбой/таймаут).")
+                
+                # Если это не последняя попытка — ждём с экспоненциальной задержкой и джиттером
+                if attempt < max(1, BITRIX_MAX_RETRIES):
+                    delay = BITRIX_RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                    # Небольшой джиттер, чтобы не ударять строго в одни и те же секунды
+                    delay = delay + random.uniform(0, 0.3 * delay)
+                    logger.warning(f"Повтор через {delay:.2f} сек...")
+                    time.sleep(delay)
+                else:
+                    logger.error(f"Все попытки исчерпаны для {method}")
+                    break
+        # Если дошли сюда — не удалось
+        assert last_error is not None
+        raise last_error
     
     def _format_comment(self, row_data: List[str]) -> str:
         """
