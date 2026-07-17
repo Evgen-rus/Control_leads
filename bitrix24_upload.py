@@ -190,7 +190,7 @@ class BitrixLeadUploader:
             if result.get("result"):
                 lead_id = result["result"]
                 self.leads_created += 1
-                logger.info(f"✅ Лид успешно создан. ID: {lead_id}, Имя: {name}, Телефон: {phone}")
+                logger.debug(f"✅ Лид успешно создан. ID: {lead_id}, Имя: {name}, Телефон: {phone}")
                 return {"success": True, "lead_id": lead_id, "name": name, "phone": phone}
             else:
                 logger.error(f"❌ Ошибка создания лида для {name}: {result}")
@@ -215,10 +215,10 @@ class BitrixLeadUploader:
             Dict[str, Any]: Статистика обработки (created, failed, leads)
         """
         if not new_rows:
-            logger.info("Новых строк для отправки в Битрикс24 нет")
+            logger.debug("Новых строк для отправки в Битрикс24 нет")
             return {"created": 0, "failed": 0, "leads": []}
         
-        logger.info(f"=== Начало отправки {len(new_rows)} лидов в Битрикс24 ===")
+        logger.debug(f"=== Начало отправки {len(new_rows)} лидов в Битрикс24 ===")
         
         # Сбрасываем счётчики
         self.leads_created = 0
@@ -229,7 +229,7 @@ class BitrixLeadUploader:
         
         # Обрабатываем каждую строку
         for i, row in enumerate(new_rows, 1):
-            logger.info(f"Обработка лида {i}/{len(new_rows)}")
+            logger.debug(f"Обработка лида {i}/{len(new_rows)}")
             
             # Создаём лид
             result = self.create_lead(row)
@@ -240,10 +240,10 @@ class BitrixLeadUploader:
                 logger.debug(f"Данные неудачной строки: {row}")
         
         # Выводим итоговую статистику
-        logger.info(f"=== Завершена отправка в Битрикс24 ===")
-        logger.info(f"Успешно создано лидов: {self.leads_created}")
-        logger.info(f"Ошибок при создании: {self.leads_failed}")
-        logger.info(f"Общий процент успеха: {(self.leads_created / len(new_rows) * 100):.1f}%")
+        logger.debug(f"=== Завершена отправка в Битрикс24 ===")
+        logger.debug(f"Успешно создано лидов: {self.leads_created}")
+        logger.debug(f"Ошибок при создании: {self.leads_failed}")
+        logger.debug(f"Общий процент успеха: {(self.leads_created / len(new_rows) * 100):.1f}%")
         
         return {
             "created": self.leads_created,
@@ -264,17 +264,17 @@ def upload_leads_to_bitrix() -> Dict[str, Any]:
         Exception: При критических ошибках
     """
     try:
-        logger.info("=== ЗАПУСК ОТПРАВКИ ЛИДОВ В БИТРИКС24 ===")
+        logger.debug("=== ЗАПУСК ОТПРАВКИ ЛИДОВ В БИТРИКС24 ===")
         
         # Получаем новые строки из синхронизации
-        logger.info("Получение новых строк из синхронизации...")
+        logger.debug("Получение новых строк из синхронизации...")
         new_rows = sync_and_return_new_rows()
         
         if not new_rows:
-            logger.info("Новых лидов для отправки в Битрикс24 нет")
+            logger.debug("Новых лидов для отправки в Битрикс24 нет")
             return {"created": 0, "failed": 0, "leads": []}
         
-        logger.info(f"Получено {len(new_rows)} новых лидов для отправки в Битрикс24")
+        logger.debug(f"Получено {len(new_rows)} новых лидов для отправки в Битрикс24")
         
         # Создаём экземпляр загрузчика
         uploader = BitrixLeadUploader()
@@ -282,7 +282,7 @@ def upload_leads_to_bitrix() -> Dict[str, Any]:
         # Обрабатываем новые строки
         result = uploader.process_new_rows(new_rows)
         
-        logger.info("=== ОТПРАВКА ЛИДОВ В БИТРИКС24 ЗАВЕРШЕНА ===")
+        logger.debug("=== ОТПРАВКА ЛИДОВ В БИТРИКС24 ЗАВЕРШЕНА ===")
         return result
         
     except Exception as e:
@@ -296,8 +296,8 @@ def main():
     """
     try:
         start_time = datetime.now()
-        logger.info("=== ТЕСТОВЫЙ ЗАПУСК СКРИПТА БИТРИКС24 ===")
-        logger.info(f"Время запуска: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.debug("=== ТЕСТОВЫЙ ЗАПУСК СКРИПТА БИТРИКС24 ===")
+        logger.debug(f"Время запуска: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
         
         # Запускаем отправку лидов
         result = upload_leads_to_bitrix()
@@ -305,9 +305,9 @@ def main():
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds()
         
-        logger.info(f"=== ТЕСТИРОВАНИЕ ЗАВЕРШЕНО ===")
-        logger.info(f"Время выполнения: {duration:.2f} секунд")
-        logger.info(f"Результат: {result}")
+        logger.debug(f"=== ТЕСТИРОВАНИЕ ЗАВЕРШЕНО ===")
+        logger.debug(f"Время выполнения: {duration:.2f} секунд")
+        logger.debug(f"Результат: {result}")
         
     except Exception as e:
         logger.error(f"Критическая ошибка в main(): {e}")

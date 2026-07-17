@@ -4,8 +4,9 @@
 """
 Планировщик запуска sync_and_notify.py
 
-Выполняет запуск скрипта sync_and_notify.py через заданные интервалы времени.
-Первый запуск происходит сразу после старта планировщика.
+Запускает sync_and_notify.py через заданный интервал,
+но только в рабочие часы по Москве: пн–пт, с 08:00 до 18:00.
+Вне этого окна и в выходные скрипт не запускается.
 Поддерживает загрузку переменных из .env файла.
 """
 
@@ -18,11 +19,12 @@ import os
 from datetime import datetime
 from pathlib import Path
 
+import pytz
+
 # Загружаем переменные из .env файла
 try:
     from dotenv import load_dotenv
     load_dotenv(override=True)
-    print("Переменные окружения загружены из .env файла")
 except ImportError:
     print("python-dotenv не установлен. Используем системные переменные окружения.")
 
@@ -33,8 +35,9 @@ logs_dir.mkdir(exist_ok=True)
 # Настройка логирования с записью в файл
 log_filename = logs_dir / f"scheduler_{datetime.now().strftime('%Y%m%d')}.log"
 
+# WARNING: при успешной работе лог молчит; пишем только ошибки и предупреждения
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.WARNING,
     format='%(asctime)s - %(name)s - %(levelname)s: %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S',
     handlers=[
@@ -44,26 +47,53 @@ logging.basicConfig(
 )
 logger = logging.getLogger('scheduler')
 
-# Интервал запуска скрипта в секундах (по умолчанию 10 минут)
+# Интервал запуска скрипта в секундах (по умолчанию 5 минут)
 INTERVAL_SECONDS = int(os.getenv('SYNC_INTERVAL_SECONDS', 300))
+
+# Рабочие часы по Москве: с 8:00 включительно до 18:00 невключая
+MOSCOW_TZ = pytz.timezone('Europe/Moscow')
+WORK_START_HOUR = int(os.getenv('WORK_START_HOUR', 8))
+WORK_END_HOUR = int(os.getenv('WORK_END_HOUR', 18))
 
 # Флаг для отслеживания запроса на завершение
 terminate = False
 
+
+def is_working_time(now=None):
+    """
+    Проверяет, сейчас ли рабочее время по Москве (пн–пт, 08:00–18:00).
+
+    Returns:
+        bool: True если можно запускать sync_and_notify.py
+    """
+    if now is None:
+        now = datetime.now(MOSCOW_TZ)
+    elif now.tzinfo is None:
+        now = MOSCOW_TZ.localize(now)
+    else:
+        now = now.astimezone(MOSCOW_TZ)
+
+    # weekday(): пн=0 ... вс=6
+    if now.weekday() >= 5:
+        return False
+
+    work_start = now.replace(
+        hour=WORK_START_HOUR, minute=0, second=0, microsecond=0
+    )
+    work_end = now.replace(
+        hour=WORK_END_HOUR, minute=0, second=0, microsecond=0
+    )
+    return work_start <= now < work_end
+
+
 def run_sync_and_notify_script():
     """
     Запускает скрипт sync_and_notify.py для синхронизации и отправки уведомлений.
-    Выводит логи скрипта напрямую в консоль.
     
     Returns:
         bool: True если скрипт выполнился успешно, False в случае ошибки
     """
     try:
-        start_time = datetime.now()
-        logger.info("=" * 50)
-        logger.info(f"Запуск скрипта sync_and_notify.py в {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        logger.info("=" * 50)
-        
         # Полный путь к скрипту
         script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sync_and_notify.py")
         
@@ -107,22 +137,16 @@ def run_sync_and_notify_script():
                 cwd=os.path.dirname(script_path)  # гарантируем запуск в директории проекта
             )
         
-        # Выводим логи скрипта
-        if result.stdout:
-            for line in result.stdout.splitlines():
-                logger.info(f"[script] {line}")
-        
-        # Проверка успешного выполнения
-        end_time = datetime.now()
-        duration = (end_time - start_time).total_seconds()
-        
-        if result.returncode == 0:
-            logger.info(f"Скрипт успешно выполнен за {duration:.2f} секунд")
-            return True
-        else:
+        # Логи дочернего скрипта — только если он упал
+        if result.returncode != 0:
             logger.error(f"Ошибка при выполнении скрипта (код возврата: {result.returncode})")
-            logger.error(f"Время выполнения: {duration:.2f} секунд")
+            if result.stdout:
+                for line in result.stdout.splitlines():
+                    if line.strip():
+                        logger.error(f"[script] {line}")
             return False
+
+        return True
             
     except FileNotFoundError:
         logger.error("Python интерпретатор не найден")
@@ -134,36 +158,14 @@ def run_sync_and_notify_script():
         logger.error(f"Неожиданная ошибка при запуске скрипта: {e}")
         return False
 
+
 def signal_handler(sig, frame):
     """
     Обработчик сигналов для корректного завершения работы планировщика.
     """
     global terminate
-    logger.info("Получен сигнал на завершение работы. Завершаем планировщик...")
     terminate = True
 
-def format_time_interval(seconds):
-    """
-    Форматирует интервал времени в удобочитаемый вид.
-    
-    Args:
-        seconds (int): Количество секунд
-        
-    Returns:
-        str: Форматированная строка
-    """
-    if seconds < 60:
-        return f"{seconds} секунд"
-    elif seconds < 3600:
-        minutes = seconds // 60
-        return f"{minutes} минут"
-    else:
-        hours = seconds // 3600
-        minutes = (seconds % 3600) // 60
-        if minutes > 0:
-            return f"{hours} часов {minutes} минут"
-        else:
-            return f"{hours} часов"
 
 def main():
     """
@@ -186,38 +188,26 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
-    # Запускаем скрипт сразу при старте планировщика
-    logger.info("Выполняем первый запуск скрипта при старте планировщика")
-    success = run_sync_and_notify_script()
-    
-    if not success:
-        logger.warning("Первый запуск завершился с ошибкой, но планировщик продолжит работу")
-    
-    logger.info("Планировщик запущен. Для завершения нажмите Ctrl+C")
-    
-    # Время последнего запуска
-    last_run_time = time.time()
+    # Первый запуск — только в рабочее время по Москве
+    last_run_time = 0  # 0 = ещё не запускали; при входе в окно запустится сразу
+    if is_working_time():
+        success = run_sync_and_notify_script()
+        last_run_time = time.time()
+        if not success:
+            logger.warning("Первый запуск завершился с ошибкой, но планировщик продолжит работу")
     
     # Основной цикл планировщика
     global terminate
     while not terminate:
-        # Текущее время
         current_time = time.time()
-        
-        # Проверяем, прошел ли интервал времени с последнего запуска
-        if current_time - last_run_time >= INTERVAL_SECONDS:
+
+        # Вне пн–пт 08:00–18:00 МСК синхронизацию не запускаем
+        if is_working_time() and (current_time - last_run_time >= INTERVAL_SECONDS):
             success = run_sync_and_notify_script()
             last_run_time = time.time()
             
             if not success:
                 logger.warning("Запуск завершился с ошибкой, следующая попытка через установленный интервал")
-        
-        # Вычисляем время до следующего запуска
-        time_to_next_run = INTERVAL_SECONDS - (current_time - last_run_time)
-        if time_to_next_run > 0:
-            next_run_time = datetime.fromtimestamp(last_run_time + INTERVAL_SECONDS)
-            logger.info(f"Следующий запуск: {next_run_time.strftime('%Y-%m-%d %H:%M:%S')} "
-                       f"(через {format_time_interval(int(time_to_next_run))})")
         
         # Спим 1 минуту для снижения нагрузки на процессор
         # Проверяем флаг завершения каждые 5 секунд
@@ -226,7 +216,6 @@ def main():
                 break
             time.sleep(5)
     
-    logger.info("Планировщик завершил работу")
     return 0
 
 if __name__ == "__main__":

@@ -33,8 +33,9 @@ logs_dir.mkdir(exist_ok=True)
 # Настройка логирования с записью в файл
 log_filename = logs_dir / f"sync_and_notify_{datetime.now().strftime('%Y%m%d')}.log"
 
+# WARNING: при успешном прогоне лог молчит; пишем только ошибки и предупреждения
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.WARNING,
     format="%(asctime)s - %(levelname)s - %(name)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
@@ -89,14 +90,10 @@ async def notify_rows_data(new_rows: List[List[str]]) -> bool:
         return False
     
     if not new_rows:
-        logger.info("Новых строк для Telegram нет")
         return True
     
     async with Bot(token=TELEGRAM_BOT_TOKEN) as bot:
         try:
-            logger.info(f"Найдено {len(new_rows)} новых лидов для отправки в Telegram")
-            logger.info(f"Используем Chat ID: {TELEGRAM_CHAT_ID}")
-
             for i, row in enumerate(new_rows, 1):
                 try:
                     # Формируем сообщение с проверкой длины строки
@@ -131,8 +128,6 @@ async def notify_rows_data(new_rows: List[List[str]]) -> bool:
                         parse_mode="HTML"
                     )
                     
-                    logger.info(f"Отправлено уведомление {i}/{len(new_rows)} для лида: {name} ({phone})")
-                    
                     # Задержка между сообщениями
                     await asyncio.sleep(1)
                     
@@ -140,7 +135,6 @@ async def notify_rows_data(new_rows: List[List[str]]) -> bool:
                     logger.error(f"Ошибка при отправке строки {i}: {e}")
                     logger.error(f"Данные строки: {row}")
                     
-            logger.info(f"Завершена отправка уведомлений. Обработано {len(new_rows)} лидов.")
             return True
             
         except Exception as e:
@@ -160,10 +154,7 @@ def upload_rows_to_bitrix(new_rows: List[List[str]]) -> Dict[str, Any]:
     """
     try:
         if not new_rows:
-            logger.info("Новых строк для отправки в Битрикс24 нет")
             return {"created": 0, "failed": 0, "leads": []}
-        
-        logger.info(f"Получено {len(new_rows)} новых лидов для отправки в Битрикс24")
         
         # Создаём экземпляр загрузчика
         uploader = BitrixLeadUploader()
@@ -211,7 +202,6 @@ async def send_bitrix_notification(bitrix_result: Dict[str, Any]) -> bool:
     
     # Проверяем, есть ли что отправлять
     if bitrix_result.get("created", 0) == 0 and bitrix_result.get("failed", 0) == 0:
-        logger.info("Нет данных о лидах в Битрикс24 для отправки уведомления")
         return True
     
     async with Bot(token=TELEGRAM_BOT_TOKEN) as bot:
@@ -254,7 +244,6 @@ async def send_bitrix_notification(bitrix_result: Dict[str, Any]) -> bool:
                 disable_web_page_preview=True
             )
             
-            logger.info(f"Отправлено уведомление о результатах Битрикс24: {created} создано, {failed} ошибок")
             return True
             
         except Exception as e:
@@ -267,11 +256,6 @@ async def main():
     Основная функция для запуска синхронизации, уведомлений и отправки в Битрикс24.
     """
     try:
-        start_time = datetime.now()
-        logger.info("=== ЗАПУСК ПОЛНОГО ЦИКЛА ОБРАБОТКИ ЛИДОВ ===")
-        logger.info(f"Время запуска: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        logger.info(f"Логи записываются в: {log_filename}")
-        
         # Счётчики для статистики
         sync_success = False
         telegram_success = False
@@ -281,75 +265,57 @@ async def main():
         
         # Этап 1: Синхронизация Google-таблиц
         try:
-            logger.info("🔄 ЭТАП 1: Синхронизация Google-таблиц")
             new_rows = sync_and_return_new_rows()
             sync_success = True
-            logger.info(f"✅ Этап 1 завершён успешно. Найдено новых лидов: {len(new_rows)}")
         except Exception as e:
-            logger.error(f"❌ Ошибка на этапе синхронизации: {e}")
+            logger.error(f"Ошибка на этапе синхронизации: {e}")
             sync_success = False
             new_rows = []
         
         # Этап 2: Уведомления в Telegram (только если есть новые данные)
         if sync_success and new_rows:
             try:
-                logger.info("📱 ЭТАП 2: Отправка уведомлений в Telegram")
                 telegram_success = await notify_rows_data(new_rows)
-                if telegram_success:
-                    logger.info("✅ Этап 2 завершён успешно")
-                else:
-                    logger.error("❌ Этап 2 завершён с ошибками")
+                if not telegram_success:
+                    logger.error("Этап 2 (Telegram) завершён с ошибками")
             except Exception as e:
-                logger.error(f"❌ Ошибка на этапе уведомлений в Telegram: {e}")
+                logger.error(f"Ошибка на этапе уведомлений в Telegram: {e}")
                 telegram_success = False
         else:
-            logger.info("📱 ЭТАП 2: Пропущен (нет новых данных)")
             telegram_success = True  # Считаем успешным, так как нет данных для обработки
         
         # Этап 3: Отправка лидов в Битрикс24 (только если есть новые данные)
         if sync_success and new_rows:
             try:
-                logger.info("🚀 ЭТАП 3: Отправка лидов в Битрикс24")
                 bitrix_result = upload_rows_to_bitrix(new_rows)
-                logger.info("✅ Этап 3 завершён успешно")
                 
                 # Этап 4: Уведомление о результатах Битрикс24
-                logger.info("📩 ЭТАП 4: Отправка уведомления о результатах Битрикс24")
                 bitrix_notification_success = await send_bitrix_notification(bitrix_result)
-                if bitrix_notification_success:
-                    logger.info("✅ Этап 4 завершён успешно")
-                else:
-                    logger.error("❌ Этап 4 завершён с ошибками")
+                if not bitrix_notification_success:
+                    logger.error("Этап 4 (уведомление о Битрикс24) завершён с ошибками")
                     
             except Exception as e:
-                logger.error(f"❌ Ошибка при отправке лидов в Битрикс24: {e}")
+                logger.error(f"Ошибка при отправке лидов в Битрикс24: {e}")
                 bitrix_result = {"created": 0, "failed": 0, "leads": []}
         else:
-            logger.info("🚀 ЭТАП 3: Пропущен (нет новых данных)")
-            logger.info("📩 ЭТАП 4: Пропущен (нет новых данных)")
+            # Этапы 3–4 пропущены — это не ошибка
+            bitrix_notification_success = True
         
-        # Итоговая статистика
-        end_time = datetime.now()
-        duration = (end_time - start_time).total_seconds()
-        
-        logger.info("=" * 60)
-        logger.info("📊 ИТОГОВАЯ СТАТИСТИКА")
-        logger.info("=" * 60)
-        logger.info(f"Время выполнения: {duration:.2f} секунд")
-        logger.info(f"Синхронизация: {'✅ Успешно' if sync_success else '❌ Ошибка'}")
-        logger.info(f"Найдено новых лидов: {len(new_rows)}")
-        logger.info(f"Telegram уведомления: {'✅ Успешно' if telegram_success else '❌ Ошибка'}")
-        logger.info(f"Лидов создано в Битрикс24: {bitrix_result['created']}")
-        logger.info(f"Ошибок при создании лидов: {bitrix_result['failed']}")
-        logger.info(f"Уведомления о Битрикс24: {'✅ Успешно' if bitrix_notification_success else '❌ Ошибка'}")
-        
-        if bitrix_result['created'] > 0 or bitrix_result['failed'] > 0:
-            total_processed = bitrix_result['created'] + bitrix_result['failed']
-            success_rate = (bitrix_result['created'] / total_processed * 100) if total_processed > 0 else 0
-            logger.info(f"Процент успеха в Битрикс24: {success_rate:.1f}%")
-        
-        logger.info("=" * 60)
-        logger.info("🎉 ПОЛНЫЙ ЦИКЛ ОБРАБОТКИ ЛИДОВ ЗАВЕРШЁН")
+        # Итог пишем только если что-то пошло не так
+        created = bitrix_result.get("created", 0)
+        failed = bitrix_result.get("failed", 0)
+        if (
+            not sync_success
+            or not telegram_success
+            or not bitrix_notification_success
+            or failed > 0
+        ):
+            logger.error(
+                f"Цикл завершён с проблемами: sync={'ok' if sync_success else 'fail'}, "
+                f"Telegram={'ok' if telegram_success else 'fail'}, "
+                f"уведомление Битрикс={'ok' if bitrix_notification_success else 'fail'}, "
+                f"новых строк={len(new_rows)}, создано={created}, ошибок Битрикс={failed}"
+            )
         
     except Exception as e:
         logger.error(f"Критическая ошибка в main(): {e}")

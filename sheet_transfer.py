@@ -78,14 +78,14 @@ def create_sheets_service():
         if not os.path.exists(creds_file):
             raise RuntimeError(f"Файл credentials не найден: {creds_file}")
         
-        logger.info(f"Загружаем credentials из: {creds_file}")
+        logger.debug(f"Загружаем credentials из: {creds_file}")
         creds = service_account.Credentials.from_service_account_file(
             creds_file, scopes=SCOPES
         )
         
         # Создаём сервис с отключённым кэшем discovery для лучшей производительности
         service = build("sheets", "v4", credentials=creds, cache_discovery=False)
-        logger.info("Сервис Google Sheets успешно создан")
+        logger.debug("Сервис Google Sheets успешно создан")
         return service
         
     except Exception as e:
@@ -97,7 +97,7 @@ def create_sheets_service():
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=1, max=10),
     retry=retry_if_exception_type((HttpError, ConnectionError, TimeoutError)),
-    before_sleep=lambda retry_state: logger.info(f"Повторная попытка через {retry_state.next_action.sleep} секунд...")
+    before_sleep=lambda retry_state: logger.warning(f"Повторная попытка через {retry_state.next_action.sleep} секунд...")
 )
 def get_sheet_data(service, spreadsheet_id: str, sheet_name: str) -> List[List[str]]:
     """
@@ -117,7 +117,7 @@ def get_sheet_data(service, spreadsheet_id: str, sheet_name: str) -> List[List[s
         ConnectionError: При проблемах с сетью
         TimeoutError: При таймаутах
     """
-    logger.info(f"Читаем данные из листа '{sheet_name}' (ID: {spreadsheet_id[:10]}...)")
+    logger.debug(f"Читаем данные из листа '{sheet_name}' (ID: {spreadsheet_id[:10]}...)")
     
     response = service.spreadsheets().values().get(
         spreadsheetId=spreadsheet_id,
@@ -125,7 +125,7 @@ def get_sheet_data(service, spreadsheet_id: str, sheet_name: str) -> List[List[s
     ).execute()
     
     rows = response.get("values", [])
-    logger.info(f"Получено {len(rows)} строк из листа '{sheet_name}'")
+    logger.debug(f"Получено {len(rows)} строк из листа '{sheet_name}'")
     return rows
 
 
@@ -256,8 +256,8 @@ def find_recent_data_start_index(rows: List[List[str]]) -> int:
     cutoff_date = moscow_now - timedelta(days=analysis_days)
     cutoff_date = cutoff_date.date()
     
-    logger.info(f"Ищем данные начиная с {cutoff_date.strftime('%Y-%m-%d')} (глубина: {analysis_days} дней)")
-    logger.info(f"Текущее московское время: {moscow_now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    logger.debug(f"Ищем данные начиная с {cutoff_date.strftime('%Y-%m-%d')} (глубина: {analysis_days} дней)")
+    logger.debug(f"Текущее московское время: {moscow_now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
     
     # Проходим строки с конца (новые данные обычно в конце)
     recent_start_index = 0
@@ -285,10 +285,10 @@ def find_recent_data_start_index(rows: List[List[str]]) -> int:
     if found_recent:
         total_rows = len(rows)
         recent_rows = total_rows - recent_start_index
-        logger.info(f"Найдены недавние данные: строки {recent_start_index+1}-{total_rows} ({recent_rows} строк)")
-        logger.info(f"Оптимизация: пропускаем {recent_start_index} старых строк ({recent_start_index/total_rows*100:.1f}%)")
+        logger.debug(f"Найдены недавние данные: строки {recent_start_index+1}-{total_rows} ({recent_rows} строк)")
+        logger.debug(f"Оптимизация: пропускаем {recent_start_index} старых строк ({recent_start_index/total_rows*100:.1f}%)")
     else:
-        logger.info("Недавние данные не найдены, анализируем все строки")
+        logger.debug("Недавние данные не найдены, анализируем все строки")
     
     return recent_start_index
 
@@ -324,12 +324,12 @@ def extract_phone_numbers(rows: List[List[str]], start_index: int = 0) -> Set[st
                 logger.debug(f"Пропущен некорректный номер: '{original_phone}'")
     
     if start_index > 0:
-        logger.info(f"Найдено {len(phones)} уникальных нормализованных телефонов в {len(analyzed_rows)} недавних строках")
+        logger.debug(f"Найдено {len(phones)} уникальных нормализованных телефонов в {len(analyzed_rows)} недавних строках")
     else:
-        logger.info(f"Найдено {len(phones)} уникальных нормализованных телефонов во всех {len(rows)} строках")
+        logger.debug(f"Найдено {len(phones)} уникальных нормализованных телефонов во всех {len(rows)} строках")
     
     if invalid_phones > 0:
-        logger.info(f"Пропущено {invalid_phones} некорректных номеров телефонов")
+        logger.debug(f"Пропущено {invalid_phones} некорректных номеров телефонов")
     
     return phones
 
@@ -397,11 +397,11 @@ def filter_new_rows(src_rows: List[List[str]], existing_phones: Set[str]) -> Lis
             skipped_no_phone += 1
             logger.debug(f"Пропущена короткая строка (нет столбца D): {normalized_row}")
     
-    logger.info(f"Обработано строк: {len(src_rows)}")
-    logger.info(f"Новых строк для добавления: {len(new_rows)}")
-    logger.info(f"Пропущено строк без телефона: {skipped_no_phone}")
-    logger.info(f"Пропущено строк с некорректными номерами: {skipped_invalid}")
-    logger.info(f"Пропущено дублирующих строк: {skipped_duplicate}")
+    logger.debug(f"Обработано строк: {len(src_rows)}")
+    logger.debug(f"Новых строк для добавления: {len(new_rows)}")
+    logger.debug(f"Пропущено строк без телефона: {skipped_no_phone}")
+    logger.debug(f"Пропущено строк с некорректными номерами: {skipped_invalid}")
+    logger.debug(f"Пропущено дублирующих строк: {skipped_duplicate}")
     
     return new_rows
 
@@ -410,7 +410,7 @@ def filter_new_rows(src_rows: List[List[str]], existing_phones: Set[str]) -> Lis
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=1, max=10),
     retry=retry_if_exception_type((HttpError, ConnectionError, TimeoutError)),
-    before_sleep=lambda retry_state: logger.info(f"Повторная попытка через {retry_state.next_action.sleep} секунд...")
+    before_sleep=lambda retry_state: logger.warning(f"Повторная попытка через {retry_state.next_action.sleep} секунд...")
 )
 def append_rows_to_sheet(service, spreadsheet_id: str, sheet_name: str, rows: List[List[str]]) -> int:
     """
@@ -432,10 +432,10 @@ def append_rows_to_sheet(service, spreadsheet_id: str, sheet_name: str, rows: Li
         TimeoutError: При таймаутах
     """
     if not rows:
-        logger.info("Новых строк нет — ничего не добавляем")
+        logger.debug("Новых строк нет — ничего не добавляем")
         return 0
     
-    logger.info(f"Добавляем {len(rows)} строк в лист '{sheet_name}'")
+    logger.debug(f"Добавляем {len(rows)} строк в лист '{sheet_name}'")
     
     service.spreadsheets().values().append(
         spreadsheetId=spreadsheet_id,
@@ -445,7 +445,7 @@ def append_rows_to_sheet(service, spreadsheet_id: str, sheet_name: str, rows: Li
         body={"values": rows}
     ).execute()
     
-    logger.info(f"Успешно добавлено {len(rows)} строк")
+    logger.debug(f"Успешно добавлено {len(rows)} строк")
     return len(rows)
 
 
@@ -461,10 +461,7 @@ def sync_and_return_new_rows() -> List[List[str]]:
         Exception: При критических ошибках синхронизации
     """
     try:
-        logger.info("=== Запуск синхронизации для Telegram-бота ===")
-        logger.info(f"Источник: {SRC_SHEET} (ID: {SRC_ID[:10]}...)")
-        logger.info(f"Приёмник: {DST_SHEET} (ID: {DST_ID[:10]}...)")
-        
+                
         # Создаём сервис Google Sheets
         service = create_sheets_service()
         
@@ -481,35 +478,35 @@ def sync_and_return_new_rows() -> List[List[str]]:
             logger.warning("В источнике только заголовок — нет данных для синхронизации")
             return []
         
-        logger.info("=== Применение оптимизации по датам ===")
+        logger.debug("=== Применение оптимизации по датам ===")
         
         # Проверяем настройку оптимизации источника
         optimize_source = os.getenv('OPTIMIZE_SOURCE', 'false').lower() == 'true'
-        logger.info(f"Оптимизация источника: {'включена' if optimize_source else 'отключена'}")
+        logger.debug(f"Оптимизация источника: {'включена' if optimize_source else 'отключена'}")
         
         # Оптимизация источника (если включена)
         src_data_rows = src_rows[1:]  # Пропускаем заголовок
-        logger.info(f"ИСТОЧНИК: общее количество строк данных: {len(src_data_rows)}")
+        logger.debug(f"ИСТОЧНИК: общее количество строк данных: {len(src_data_rows)}")
         
         if optimize_source:
             src_recent_start_index = find_recent_data_start_index(src_data_rows)
             src_recent_rows = src_data_rows[src_recent_start_index:]
             
-            logger.info(f"ИСТОЧНИК: будет обработано {len(src_recent_rows)} недавних строк")
+            logger.debug(f"ИСТОЧНИК: будет обработано {len(src_recent_rows)} недавних строк")
             if src_recent_start_index > 0:
-                logger.info(f"ИСТОЧНИК: пропущено {src_recent_start_index} старых строк")
+                logger.debug(f"ИСТОЧНИК: пропущено {src_recent_start_index} старых строк")
         else:
             src_recent_rows = src_data_rows
-            logger.info(f"ИСТОЧНИК: будут обработаны все {len(src_recent_rows)} строк")
+            logger.debug(f"ИСТОЧНИК: будут обработаны все {len(src_recent_rows)} строк")
         
         # Оптимизация приёмника (всегда включена)
         dst_data_rows = dst_rows[1:] if len(dst_rows) > 1 else []
-        logger.info(f"ПРИЁМНИК: общее количество строк данных: {len(dst_data_rows)}")
+        logger.debug(f"ПРИЁМНИК: общее количество строк данных: {len(dst_data_rows)}")
         
         dst_recent_start_index = find_recent_data_start_index(dst_data_rows)
         existing_phones = extract_phone_numbers(dst_data_rows, dst_recent_start_index)
         
-        logger.info("=== Фильтрация новых записей ===")
+        logger.debug("=== Фильтрация новых записей ===")
         
         # Фильтруем новые строки из обработанных данных источника
         new_rows = filter_new_rows(src_recent_rows, existing_phones)
@@ -517,9 +514,9 @@ def sync_and_return_new_rows() -> List[List[str]]:
         # Добавляем новые строки в приёмник
         if new_rows:
             append_rows_to_sheet(service, DST_ID, DST_SHEET, new_rows)
-            logger.info(f"=== Синхронизация завершена. Добавлено {len(new_rows)} новых строк ===")
+            logger.debug(f"=== Синхронизация завершена. Добавлено {len(new_rows)} новых строк ===")
         else:
-            logger.info("=== Синхронизация завершена. Новых строк не найдено ===")
+            logger.debug("=== Синхронизация завершена. Новых строк не найдено ===")
         
         return new_rows
         
@@ -534,10 +531,6 @@ def main():
     Выполняет синхронизацию данных между таблицами.
     """
     try:
-        logger.info("=== Запуск синхронизации данных ===")
-        logger.info(f"Источник: {SRC_SHEET} (ID: {SRC_ID[:10]}...)")
-        logger.info(f"Приёмник: {DST_SHEET} (ID: {DST_ID[:10]}...)")
-        
         # Создаём сервис Google Sheets
         service = create_sheets_service()
         
@@ -554,35 +547,35 @@ def main():
             logger.warning("В источнике только заголовок — нет данных для синхронизации")
             return
         
-        logger.info("=== Применение оптимизации по датам ===")
+        logger.debug("=== Применение оптимизации по датам ===")
         
         # Проверяем настройку оптимизации источника
         optimize_source = os.getenv('OPTIMIZE_SOURCE', 'false').lower() == 'true'
-        logger.info(f"Оптимизация источника: {'включена' if optimize_source else 'отключена'}")
+        logger.debug(f"Оптимизация источника: {'включена' if optimize_source else 'отключена'}")
         
         # Оптимизация источника (если включена)
         src_data_rows = src_rows[1:]  # Пропускаем заголовок
-        logger.info(f"ИСТОЧНИК: общее количество строк данных: {len(src_data_rows)}")
+        logger.debug(f"ИСТОЧНИК: общее количество строк данных: {len(src_data_rows)}")
         
         if optimize_source:
             src_recent_start_index = find_recent_data_start_index(src_data_rows)
             src_recent_rows = src_data_rows[src_recent_start_index:]
             
-            logger.info(f"ИСТОЧНИК: будет обработано {len(src_recent_rows)} недавних строк")
+            logger.debug(f"ИСТОЧНИК: будет обработано {len(src_recent_rows)} недавних строк")
             if src_recent_start_index > 0:
-                logger.info(f"ИСТОЧНИК: пропущено {src_recent_start_index} старых строк")
+                logger.debug(f"ИСТОЧНИК: пропущено {src_recent_start_index} старых строк")
         else:
             src_recent_rows = src_data_rows
-            logger.info(f"ИСТОЧНИК: будут обработаны все {len(src_recent_rows)} строк")
+            logger.debug(f"ИСТОЧНИК: будут обработаны все {len(src_recent_rows)} строк")
         
         # Оптимизация приёмника (всегда включена)
         dst_data_rows = dst_rows[1:] if len(dst_rows) > 1 else []
-        logger.info(f"ПРИЁМНИК: общее количество строк данных: {len(dst_data_rows)}")
+        logger.debug(f"ПРИЁМНИК: общее количество строк данных: {len(dst_data_rows)}")
         
         dst_recent_start_index = find_recent_data_start_index(dst_data_rows)
         existing_phones = extract_phone_numbers(dst_data_rows, dst_recent_start_index)
         
-        logger.info("=== Фильтрация новых записей ===")
+        logger.debug("=== Фильтрация новых записей ===")
         
         # Фильтруем новые строки из обработанных данных источника
         new_rows = filter_new_rows(src_recent_rows, existing_phones)
@@ -590,7 +583,7 @@ def main():
         # Добавляем новые строки в приёмник
         added_count = append_rows_to_sheet(service, DST_ID, DST_SHEET, new_rows)
         
-        logger.info(f"=== Синхронизация завершена. Добавлено {added_count} новых строк ===")
+        logger.debug(f"=== Синхронизация завершена. Добавлено {added_count} новых строк ===")
         
     except Exception as e:
         logger.error(f"Критическая ошибка в main(): {e}")
