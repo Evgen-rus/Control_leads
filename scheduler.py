@@ -168,14 +168,7 @@ def format_time_interval(seconds):
 def main():
     """
     Основная функция планировщика.
-    """
-    logger.info("=" * 60)
-    logger.info("ЗАПУСК ПЛАНИРОВЩИКА СИНХРОНИЗАЦИИ И УВЕДОМЛЕНИЙ")
-    logger.info("=" * 60)
-    logger.info(f"Интервал синхронизации: {format_time_interval(INTERVAL_SECONDS)}")
-    logger.info(f"Скрипт: sync_and_notify.py")
-    logger.info(f"Логи записываются в: {log_filename}")
-    
+    """   
     # Проверяем наличие необходимых переменных окружения
     required_vars = ['GOOGLE_CREDENTIALS_FILE', 'SRC_ID', 'DST_ID', 'SRC_SHEET', 'DST_SHEET', 'TELEGRAM_BOT_TOKEN_ASSISTANT', 'TELEGRAM_CHAT_ID']
     missing_vars = []
